@@ -1,0 +1,399 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Étape 2 — Fluide + fumée audio</title>
+  <style>
+    :root {
+      --bg: #0a0f18;
+      --panel: rgba(10,14,24,.62);
+      --border: rgba(255,255,255,.12);
+      --text: rgba(255,255,255,.92);
+      --muted: rgba(255,255,255,.68);
+    }
+    html, body {
+      margin: 0;
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      background: radial-gradient(1200px 700px at 50% 10%, #13203a 0%, #0c1220 35%, #090d15 100%);
+      color: var(--text);
+      font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+    }
+    #fluidCanvas, #pointsCanvas {
+      position: fixed;
+      inset: 0;
+      width: 100vw;
+      height: 100vh;
+      display: block;
+    }
+    #fluidCanvas { z-index: 1; pointer-events: none; opacity: .72; }
+    #pointsCanvas {
+      z-index: 3;
+      pointer-events: auto;
+    }
+    .ui {
+      position: fixed;
+      z-index: 10;
+      left: 12px;
+      right: 12px;
+      top: 25px;
+      display: flex;
+      gap: 12px;
+      align-items: flex-start;
+      justify-content: space-between;
+      pointer-events: auto;
+    }
+    .bar, .panel {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      backdrop-filter: blur(10px);
+      box-shadow: 0 10px 40px rgba(0,0,0,.25);
+    }
+    .bar {
+      border-radius: 16px;
+      padding: 10px 14px;
+      display: flex;
+      gap: 12px;
+      align-items: center;
+      flex-wrap: wrap;
+    }
+    .panel {
+      width: 380px;
+      max-width: min(380px, calc(100vw - 24px));
+      border-radius: 16px;
+      padding: 12px 14px;
+      max-height: calc(100vh - 170px);
+      overflow: auto;
+    }
+    .row {
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 10px;
+      align-items: center;
+      margin: 10px 0;
+    }
+    .row input[type="range"] {
+      grid-column: 1 / -1;
+      width: 100%;
+    }
+    .small { font-size: 12px; color: var(--muted); }
+    .value { font-size: 12px; color: var(--text); min-width: 76px; text-align: right; }
+    .divider {
+      height: 1px;
+      background: rgba(255,255,255,.10);
+      margin: 10px 0;
+    }
+    .btn, .fileLabel, .toggle {
+      cursor: pointer;
+      color: var(--text);
+      font-size: 13px;
+    }
+    input[type="file"] { display: none; }
+    input[type="range"] { accent-color: white; }
+    .toggle { display: inline-flex; align-items: center; gap: 8px; }
+    .status {
+		top: 75px;
+		height: 18px;
+      position: fixed;
+      left: 12px;
+      bottom: 12px;
+      z-index: 10;
+      padding: 10px 14px;
+      border-radius: 16px;
+      background: var(--panel);
+      border: 1px solid var(--border);
+      font-size: 13px;
+      color: var(--muted);
+      backdrop-filter: blur(10px);
+    }
+    .promo { display: none !important; }
+    .dg { z-index: 20 !important; transition: opacity .18s ease; }
+    #audio { transition: opacity .18s ease; }
+    .ui-layer {
+      transition: opacity .18s ease, transform .18s ease;
+    }
+    html.ui-hidden .ui-layer,
+    html.ui-hidden .dg,
+    html.ui-hidden #audio {
+      opacity: 0 !important;
+      pointer-events: none !important;
+      transform: translateY(-6px);
+    }
+    @media (max-width: 900px) {
+      .ui { flex-direction: column; }
+      .panel { width: min(420px, calc(100vw - 24px)); }
+    }
+  </style>
+</head>
+<body>
+  <canvas id="fluidCanvas"></canvas>
+  <canvas id="pointsCanvas"></canvas>
+
+  <div class="ui ui-layer">
+    <div class="bar">
+      <label class="fileLabel" for="audioFile">Charger un mp3</label>
+      <input id="audioFile" type="file" accept="audio/*">
+
+      <label class="fileLabel" for="bgFile">Image de fond</label>
+      <input id="bgFile" type="file" accept="image/*">
+      <button id="clearBg" class="btn" type="button">Retirer fond</button>
+
+      <label class="toggle"><input id="useMic" type="checkbox"> Micro</label>
+	  
+    </div>
+	<div class="status ui-layer" id="status">Prêt</div>
+    <div class="panel">
+      <div style="font-weight:700; margin-bottom:8px;">Étape 2 — les points deviennent de la fumée</div>
+      <div class="small">Même logique audio qu’avant, mais les points sont remplacés par des émissions de fumée dans le fluide. “Afficher debug émetteurs” permet de voir les positions sources.</div>
+
+      <div class="divider"></div>
+      <div style="font-weight:600; font-size:13px;">Audio / Spawn</div>
+
+      <div class="row">
+        <label class="small">Sensibilité globale</label>
+        <div class="value" id="v_gain"></div>
+        <input id="gain" type="range" min="0.2" max="6" step="0.01" value="2.4">
+      </div>
+
+      <div class="row">
+        <label class="small">Taux d’apparition <span>(émetteurs/s)</span></label>
+        <div class="value" id="v_spawn"></div>
+        <input id="spawn" type="range" min="0" max="500" step="1" value="220">
+      </div>
+
+      <div class="row">
+        <label class="small">Max émetteurs</label>
+        <div class="value" id="v_maxPoints"></div>
+        <input id="maxPoints" type="range" min="50" max="5000" step="10" value="1400">
+      </div>
+
+      <div class="row">
+        <label class="small">Spawn vers le centre</label>
+        <div class="value" id="v_centerBias"></div>
+        <input id="centerBias" type="range" min="0" max="1" step="0.01" value="0.18">
+      </div>
+
+      <div class="row">
+        <label class="small">Spawn pile au centre <span>(%)</span></label>
+        <div class="value" id="v_centerPin"></div>
+        <input id="centerPin" type="range" min="0" max="30" step="1" value="8">
+      </div>
+
+      <div class="row">
+        <label class="small">Influence rayon par bande</label>
+        <div class="value" id="v_bandRadius"></div>
+        <input id="bandRadius" type="range" min="0" max="1" step="0.01" value="0.35">
+      </div>
+
+      <div class="row">
+        <label class="small">Focus bandes <span>(0 bass → 1 mid → 2 aigu)</span></label>
+        <div class="value" id="v_band"></div>
+        <input id="band" type="range" min="0" max="2" step="1" value="1">
+      </div>
+
+      <div class="divider"></div>
+      <div style="font-weight:600; font-size:13px;">Bandes: sensibilité & couleur</div>
+
+      <div class="row">
+        <label class="small">Sensibilité graves</label>
+        <div class="value" id="v_sensBass"></div>
+        <input id="sensBass" type="range" min="0" max="3" step="0.01" value="1.00">
+      </div>
+      <div class="row">
+        <label class="small">Sensibilité médiums</label>
+        <div class="value" id="v_sensMid"></div>
+        <input id="sensMid" type="range" min="0" max="3" step="0.01" value="1.00">
+      </div>
+      <div class="row">
+        <label class="small">Sensibilité aigus</label>
+        <div class="value" id="v_sensTre"></div>
+        <input id="sensTre" type="range" min="0" max="4" step="0.01" value="1.35">
+      </div>
+
+      <div class="row">
+        <label class="small">Couleur graves <span>(teinte °)</span></label>
+        <div class="value" id="v_hueBass"></div>
+        <input id="hueBass" type="range" min="-180" max="180" step="1" value="0">
+      </div>
+      <div class="row">
+        <label class="small">Couleur médiums <span>(teinte °)</span></label>
+        <div class="value" id="v_hueMid"></div>
+        <input id="hueMid" type="range" min="-180" max="180" step="1" value="0">
+      </div>
+      <div class="row">
+        <label class="small">Couleur aigus <span>(teinte °)</span></label>
+        <div class="value" id="v_hueTre"></div>
+        <input id="hueTre" type="range" min="-180" max="180" step="1" value="0">
+      </div>
+
+      <div class="divider"></div>
+      <div style="font-weight:600; font-size:13px;">Vie / Taille / Jitter</div>
+
+      <div class="row">
+        <label class="small">Durée de vie base <span>(ms)</span></label>
+        <div class="value" id="v_life"></div>
+        <input id="life" type="range" min="80" max="4000" step="10" value="900">
+      </div>
+
+      <div class="row">
+        <label class="small">Vie ↔ intensité <span>(%)</span></label>
+        <div class="value" id="v_lifePct"></div>
+        <input id="lifePct" type="range" min="0" max="200" step="1" value="110">
+      </div>
+
+      <div class="row">
+        <label class="small">Seuil vie</label>
+        <div class="value" id="v_lifeThr"></div>
+        <input id="lifeThr" type="range" min="0" max="1" step="0.01" value="0.55">
+      </div>
+
+      <div class="row">
+        <label class="small">Taille base</label>
+        <div class="value" id="v_size"></div>
+        <input id="size" type="range" min="1" max="18" step="0.1" value="5.0">
+      </div>
+
+      <div class="row">
+        <label class="small">Taille ↔ intensité</label>
+        <div class="value" id="v_sizei"></div>
+        <input id="sizei" type="range" min="0" max="18" step="0.1" value="7.8">
+      </div>
+
+      <div class="row">
+        <label class="small">Taille ↔ fréquence</label>
+        <div class="value" id="v_sizeSlope"></div>
+        <input id="sizeSlope" type="range" min="0" max="2" step="0.01" value="1.25">
+      </div>
+
+      <div class="row">
+        <label class="small">Jitter base</label>
+        <div class="value" id="v_jitter"></div>
+        <input id="jitter" type="range" min="0" max="0.4" step="0.001" value="0.05">
+      </div>
+
+      <div class="row">
+        <label class="small">Jitter ↔ bass <span>(%)</span></label>
+        <div class="value" id="v_jitPct"></div>
+        <input id="jitPct" type="range" min="0" max="300" step="1" value="190">
+      </div>
+
+      <div class="row">
+        <label class="small">Seuil bass jitter</label>
+        <div class="value" id="v_jitThr"></div>
+        <input id="jitThr" type="range" min="0" max="1" step="0.01" value="0.70">
+      </div>
+
+      <div class="divider"></div>
+      <div style="font-weight:600; font-size:13px;">Mouvement / BPM</div>
+
+      <div class="row">
+        <label class="small">Mode mouvement <span>(0 statique → 2 dynamique)</span></label>
+        <div class="value" id="v_motion"></div>
+        <input id="motion" type="range" min="0" max="2" step="1" value="2">
+      </div>
+
+      <div class="row">
+        <label class="small">Seuil statique</label>
+        <div class="value" id="v_thr"></div>
+        <input id="thr" type="range" min="0" max="1" step="0.01" value="0.20">
+      </div>
+
+      <div class="row">
+        <label class="small">Vitesse radiale</label>
+        <div class="value" id="v_speed"></div>
+        <input id="speed" type="range" min="-1.2" max="1.2" step="0.01" value="0.45">
+      </div>
+
+      <div class="row">
+        <label class="small">Rotation manuelle</label>
+        <div class="value" id="v_swirl"></div>
+        <input id="swirl" type="range" min="-8" max="8" step="0.01" value="0.10">
+      </div>
+
+      <div class="row">
+        <label class="small">Rotation ↔ BPM <span>(% de 1 tour/beat)</span></label>
+        <div class="value" id="v_bpmRot"></div>
+        <input id="bpmRot" type="range" min="0" max="25" step="0.1" value="3.5">
+      </div>
+
+      <div class="row">
+        <label class="small">Seuil BPM rotation</label>
+        <div class="value" id="v_bpmThr"></div>
+        <input id="bpmThr" type="range" min="0" max="1" step="0.01" value="0.60">
+      </div>
+
+      <div class="row">
+        <label class="small">Inversion sens ↔ BPM <span>(beats)</span></label>
+        <div class="value" id="v_flipBeats"></div>
+        <input id="flipBeats" type="range" min="0" max="16" step="1" value="8">
+      </div>
+
+      <div class="row">
+        <label class="small">Blend inversion</label>
+        <div class="value" id="v_flipBlend"></div>
+        <input id="flipBlend" type="range" min="0" max="100" step="1" value="100">
+      </div>
+
+      <div class="divider"></div>
+      <div style="font-weight:600; font-size:13px;">Dynamique orbitale</div>
+
+      <div class="row">
+        <label class="small">Elasticité (ressort)</label>
+        <div class="value" id="v_springK"></div>
+        <input id="springK" type="range" min="0" max="35" step="0.1" value="8.0">
+      </div>
+
+      <div class="row">
+        <label class="small">Amortissement</label>
+        <div class="value" id="v_damp"></div>
+        <input id="damp" type="range" min="0" max="8" step="0.01" value="1.90">
+      </div>
+
+      <div class="row">
+        <label class="small">Moyenne ↔ fréquences</label>
+        <div class="value" id="v_eqBlend"></div>
+        <input id="eqBlend" type="range" min="0" max="1" step="0.01" value="0.35">
+      </div>
+
+      <div class="divider"></div>
+      <div style="font-weight:600; font-size:13px;">Rendu</div>
+
+      <div class="row">
+        <label class="small">Traînées debug</label>
+        <div class="value" id="v_trail"></div>
+        <input id="trail" type="range" min="0" max="0.98" step="0.01" value="0.20">
+      </div>
+
+      <div class="row">
+        <label class="small">Opacité fumée</label>
+        <div class="value" id="v_smokeOpacity"></div>
+        <input id="smokeOpacity" type="range" min="0" max="100" step="1" value="72">
+      </div>
+
+      <div class="row">
+        <label class="small">Zoom scène</label>
+        <div class="value" id="v_zoom"></div>
+        <input id="zoom" type="range" min="-30" max="400" step="1" value="0">
+      </div>
+      <div class="small">L’image de fond se place sous la fumée. L’opacité règle uniquement la couche de fumée.</div>
+    </div>
+  </div>
+
+  
+
+  <div class="promo"><div class="promo-close"></div></div>
+  <a id="apple_link" href="#"></a>
+  <a id="google_link" href="#"></a>
+
+  <audio id="audio" controls style="position:fixed; left:12px; right:12px; bottom:56px; width:calc(100% - 24px); z-index:10; opacity:.92"></audio>
+
+  <script>
+    window.ga = window.ga || function(){};
+  </script>
+  <script src="dat.gui.min.js"></script>
+  <script src="script.js"></script>
+  <script src="points-overlay.js"></script>
+</body>
+</html>

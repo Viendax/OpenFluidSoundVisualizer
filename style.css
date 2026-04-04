@@ -1,0 +1,65 @@
+html, body {
+  margin: 0;
+  height: 100%;
+  overflow: hidden;
+}
+
+body {
+  background: #000 center/cover no-repeat fixed;
+}
+
+canvas {
+  position: fixed;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  touch-action: none;
+  mix-blend-mode: normal;
+  background: transparent;
+  display: block;
+}
+
+.ui{
+  position: fixed;
+  top: 12px;
+  left: 12px;
+  z-index: 10;
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  padding: 10px 12px;
+  background: rgba(0,0,0,.45);
+  color: white;
+  font: 14px system-ui, sans-serif;
+  border-radius: 10px;
+  backdrop-filter: blur(6px);
+}
+
+.ui input, .ui button {
+  cursor: pointer;
+}
+
+.ui button {
+  border: 1px solid rgba(255,255,255,0.25);
+  background: rgba(0,0,0,0.35);
+  color: white;
+  padding: 6px 10px;
+  border-radius: 8px;
+}
+
+.ui label {
+  display: inline-flex;
+  gap: 6px;
+  align-items: center;
+}
+
+/* Empêche la promo de s'afficher */
+.promo{display:none !important;}
+
+
+.status{
+  opacity: 0.9;
+  margin-left: 6px;
+  font-size: 12px;
+  color: rgba(255,255,255,0.9);
+}
