@@ -93,6 +93,8 @@
     input[type="file"] { display: none; }
     input[type="range"] { accent-color: white; }
     .toggle { display: inline-flex; align-items: center; gap: 8px; }
+    .toggle.is-disabled { opacity: .45; cursor: not-allowed; }
+    .toggle input[disabled] { cursor: not-allowed; }
     .status {
 		top: 75px;
 		height: 18px;
@@ -141,6 +143,7 @@
       <button id="clearBg" class="btn" type="button">Retirer fond</button>
 
       <label class="toggle"><input id="useMic" type="checkbox"> Micro</label>
+      <label class="toggle"><input id="useSystemAudio" type="checkbox"> Son de l'appareil</label>
 	  
     </div>
 	<div class="status ui-layer" id="status">Prêt</div>

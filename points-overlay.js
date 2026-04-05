@@ -12,6 +12,7 @@
   const bgFile = document.getElementById('bgFile');
   const clearBgBtn = document.getElementById('clearBg');
   const useMicEl = document.getElementById('useMic');
+  const useSystemAudioEl = document.getElementById('useSystemAudio');
   const showPointsEl = document.getElementById('showPoints');
   const testFluidBtn = document.getElementById('testFluid');
   const statusEl = document.getElementById('status');
@@ -102,7 +103,7 @@
     }
   }
   function saveSettings(){
-    const ids = ['useMic','showPoints','gain','spawn','maxPoints','centerBias','centerPin','bandRadius','band','cutLowMid','cutMidHigh','isolation','sensBass','sensMid','sensTre','hueBass','hueMid','hueTre','life','lifePct','lifeThr','size','sizei','sizeSlope','jitter','jitPct','jitThr','motion','thr','speed','swirl','bpmRot','bpmThr','flipBeats','flipBlend','springK','damp','eqBlend','trail','smokeOpacity','zoom'];
+    const ids = ['useMic','useSystemAudio','showPoints','gain','spawn','maxPoints','centerBias','centerPin','bandRadius','band','cutLowMid','cutMidHigh','isolation','sensBass','sensMid','sensTre','hueBass','hueMid','hueTre','life','lifePct','lifeThr','size','sizei','sizeSlope','jitter','jitPct','jitThr','motion','thr','speed','swirl','bpmRot','bpmThr','flipBeats','flipBlend','springK','damp','eqBlend','trail','smokeOpacity','zoom'];
     const out = { __uiVersion: UI_VERSION };
     for (const id of ids) {
       const el = document.getElementById(id);
@@ -114,6 +115,23 @@
 
   loadSettings();
   if (+ui.sensTre.value === 0) ui.sensTre.value = '1.35';
+
+  function setToggleDisabled(inputEl, disabled){
+    if (!inputEl) return;
+    inputEl.disabled = !!disabled;
+    const label = inputEl.closest('label');
+    if (label) label.classList.toggle('is-disabled', !!disabled);
+  }
+  function normalizeExclusiveAudioToggles(preferred){
+    if (!useMicEl || !useSystemAudioEl) return;
+    if (useMicEl.checked && useSystemAudioEl.checked) {
+      if (preferred === 'mic') useSystemAudioEl.checked = false;
+      else useMicEl.checked = false;
+    }
+    setToggleDisabled(useMicEl, !!useSystemAudioEl.checked);
+    setToggleDisabled(useSystemAudioEl, !!useMicEl.checked);
+  }
+  normalizeExclusiveAudioToggles('system');
 
   function applySmokeOpacity(){
     const opacity = Math.max(0, Math.min(1, (+ui.smokeOpacity.value || 0) / 100));
@@ -204,7 +222,14 @@
     el.addEventListener('input', handle);
     el.addEventListener('change', handle);
   });
-  useMicEl.addEventListener('change', saveSettings);
+  useMicEl.addEventListener('change', () => {
+    normalizeExclusiveAudioToggles('mic');
+    saveSettings();
+  });
+  useSystemAudioEl?.addEventListener('change', () => {
+    normalizeExclusiveAudioToggles('system');
+    saveSettings();
+  });
   bgFile?.addEventListener('change', () => {
     const file = bgFile.files && bgFile.files[0];
     if (!file) return;
@@ -233,7 +258,7 @@
 
   // Audio
   const BAND_CENTERS = [0.14, 0.50, 0.86];
-  let audioCtx = null, fileNode = null, micNode = null, micStream = null, objectUrl = null, bpm = 0;
+  let audioCtx = null, fileNode = null, micNode = null, micStream = null, screenNode = null, screenStream = null, objectUrl = null, bpm = 0;
   let outputGain = null, dspInput = null, dspNodes = null;
   const bandState = {
     bass: { env: 0, floor: 0, peak: 0.08, norm: 0, lastAt: 0 },
@@ -373,10 +398,21 @@
       micStream = null;
     }
   }
+  function stopSystemAudio(){
+    if (screenNode) { safeDisconnect(screenNode); screenNode = null; }
+    if (screenStream) {
+      try { screenStream.getTracks().forEach(t => t.stop()); } catch {}
+      screenStream = null;
+    }
+  }
+  function stopLiveInput(){
+    stopMic();
+    stopSystemAudio();
+  }
   async function useFileMode(){
     ensureAudio();
     if (audioCtx.state === 'suspended') await audioCtx.resume();
-    stopMic();
+    stopLiveInput();
     safeDisconnect(fileNode);
     fileNode.connect(outputGain);
     fileNode.connect(dspInput);
@@ -388,7 +424,7 @@
     if (audioCtx.state === 'suspended') await audioCtx.resume();
     audio.pause();
     safeDisconnect(fileNode);
-    stopMic();
+    stopLiveInput();
     try {
       micStream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true } });
       micNode = audioCtx.createMediaStreamSource(micStream);
@@ -398,8 +434,57 @@
       statusEl.textContent = `Micro DSP actif · ${Math.round(xo.lowMid)} / ${Math.round(xo.midHigh)} Hz`;
     } catch (e) {
       useMicEl.checked = false;
+      normalizeExclusiveAudioToggles();
       saveSettings();
       statusEl.textContent = 'Micro refusé / indisponible';
+    }
+  }
+  async function useSystemAudioMode(){
+    ensureAudio();
+    if (audioCtx.state === 'suspended') await audioCtx.resume();
+    audio.pause();
+    safeDisconnect(fileNode);
+    stopLiveInput();
+    try {
+      screenStream = await navigator.mediaDevices.getDisplayMedia({
+        video: true,
+        audio: true
+      });
+      const audioTracks = screenStream.getAudioTracks();
+      if (!audioTracks || audioTracks.length === 0) {
+        stopSystemAudio();
+        throw new Error('no-system-audio');
+      }
+      const audioOnlyStream = new MediaStream(audioTracks);
+      screenNode = audioCtx.createMediaStreamSource(audioOnlyStream);
+      screenNode.connect(dspInput);
+      bpm = 0;
+
+      const stopFromTrack = async () => {
+        if (screenStream) stopSystemAudio();
+        resetBandState();
+        if (useSystemAudioEl) useSystemAudioEl.checked = false;
+        normalizeExclusiveAudioToggles();
+        saveSettings();
+        await syncLiveInputMode();
+        if (!useMicEl?.checked) {
+          statusEl.textContent = audio.src ? 'Partage arrêté · retour fichier possible' : 'Partage d\'écran arrêté';
+        }
+      };
+      for (const track of screenStream.getTracks()) track.addEventListener('ended', stopFromTrack, { once: true });
+
+      const xo = currentCrossovers();
+      statusEl.textContent = `Son de l'appareil DSP actif · ${Math.round(xo.lowMid)} / ${Math.round(xo.midHigh)} Hz`;
+    } catch (e) {
+      if (useSystemAudioEl) useSystemAudioEl.checked = false;
+      normalizeExclusiveAudioToggles();
+      saveSettings();
+      await syncLiveInputMode();
+      if (!useMicEl?.checked) {
+        statusEl.textContent = e && e.message === 'no-system-audio'
+          ? 'Partage lancé sans audio système'
+          : 'Partage audio refusé / indisponible';
+      }
     }
   }
   function readBands(){
@@ -499,6 +584,8 @@
     audio.src = objectUrl;
     audio.load();
     useMicEl.checked = false;
+    if (useSystemAudioEl) useSystemAudioEl.checked = false;
+    normalizeExclusiveAudioToggles();
     await useFileMode();
     statusEl.textContent = `Chargé: ${f.name} · analyse BPM…`;
     bpm = await estimateBPMFromFile(f);
@@ -510,14 +597,32 @@
     await useFileMode();
     statusEl.textContent = 'Lecture audio';
   });
-  useMicEl.addEventListener('change', async () => {
-    if (useMicEl.checked) await useMicMode();
-    else {
-      stopMic();
-      resetBandState();
-      if (audio.src) await useFileMode();
-      else statusEl.textContent = 'Prêt';
+  async function syncLiveInputMode(){
+    const wantsMic = !!useMicEl?.checked;
+    const wantsSystemAudio = !!useSystemAudioEl?.checked;
+
+    if (wantsSystemAudio) {
+      await useSystemAudioMode();
+      return;
     }
+    if (wantsMic) {
+      await useMicMode();
+      return;
+    }
+
+    stopLiveInput();
+    resetBandState();
+    if (audio.src) await useFileMode();
+    else statusEl.textContent = 'Prêt';
+  }
+
+  useMicEl.addEventListener('change', async () => {
+    normalizeExclusiveAudioToggles('mic');
+    await syncLiveInputMode();
+  });
+  useSystemAudioEl?.addEventListener('change', async () => {
+    normalizeExclusiveAudioToggles('system');
+    await syncLiveInputMode();
   });
 
   function pickBand(b, m, t){
@@ -743,10 +848,11 @@
     // canvas debug seulement
     ctx.clearRect(0, 0, w, h);
 
-    const activeMic = !!micStream && useMicEl.checked;
-    const activeFile = !activeMic && !!audioCtx && !!audio.src && !audio.paused && !audio.ended;
-    const canAnalyse = !!audioCtx && !!dspNodes && (activeMic || activeFile);
-    const nowSec = activeMic ? performance.now() / 1000 : (audio.currentTime || 0);
+    const activeMic = !!micStream && !!useMicEl?.checked && !useSystemAudioEl?.checked;
+    const activeSystemAudio = !!screenStream && !!screenNode && !!useSystemAudioEl?.checked;
+    const activeFile = !activeMic && !activeSystemAudio && !!audioCtx && !!audio.src && !audio.paused && !audio.ended;
+    const canAnalyse = !!audioCtx && !!dspNodes && (activeMic || activeSystemAudio || activeFile);
+    const nowSec = (activeMic || activeSystemAudio) ? performance.now() / 1000 : (audio.currentTime || 0);
 
     let bass = 0, mid = 0, tre = 0;
     let bassNorm = 0;
