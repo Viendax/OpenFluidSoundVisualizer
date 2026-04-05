@@ -64,6 +64,7 @@
   const $ = (id) => document.getElementById(id);
   const ui = {
     gain: $('gain'), spawn: $('spawn'), maxPoints: $('maxPoints'), centerBias: $('centerBias'), centerPin: $('centerPin'), bandRadius: $('bandRadius'), band: $('band'),
+    cutLowMid: $('cutLowMid'), cutMidHigh: $('cutMidHigh'), isolation: $('isolation'),
     sensBass: $('sensBass'), sensMid: $('sensMid'), sensTre: $('sensTre'), hueBass: $('hueBass'), hueMid: $('hueMid'), hueTre: $('hueTre'),
     life: $('life'), lifePct: $('lifePct'), lifeThr: $('lifeThr'), size: $('size'), sizei: $('sizei'), sizeSlope: $('sizeSlope'), jitter: $('jitter'), jitPct: $('jitPct'), jitThr: $('jitThr'),
     motion: $('motion'), thr: $('thr'), speed: $('speed'), swirl: $('swirl'), bpmRot: $('bpmRot'), bpmThr: $('bpmThr'), flipBeats: $('flipBeats'), flipBlend: $('flipBlend'),
@@ -71,6 +72,7 @@
   };
   const vals = {
     gain: $('v_gain'), spawn: $('v_spawn'), maxPoints: $('v_maxPoints'), centerBias: $('v_centerBias'), centerPin: $('v_centerPin'), bandRadius: $('v_bandRadius'), band: $('v_band'),
+    cutLowMid: $('v_cutLowMid'), cutMidHigh: $('v_cutMidHigh'), isolation: $('v_isolation'),
     sensBass: $('v_sensBass'), sensMid: $('v_sensMid'), sensTre: $('v_sensTre'), hueBass: $('v_hueBass'), hueMid: $('v_hueMid'), hueTre: $('v_hueTre'),
     life: $('v_life'), lifePct: $('v_lifePct'), lifeThr: $('v_lifeThr'), size: $('v_size'), sizei: $('v_sizei'), sizeSlope: $('v_sizeSlope'), jitter: $('v_jitter'), jitPct: $('v_jitPct'), jitThr: $('v_jitThr'),
     motion: $('v_motion'), thr: $('v_thr'), speed: $('v_speed'), swirl: $('v_swirl'), bpmRot: $('v_bpmRot'), bpmThr: $('v_bpmThr'), flipBeats: $('v_flipBeats'), flipBlend: $('v_flipBlend'),
@@ -91,7 +93,7 @@
     }
   }
   function saveSettings(){
-    const ids = ['useMic','showPoints','gain','spawn','maxPoints','centerBias','centerPin','bandRadius','band','sensBass','sensMid','sensTre','hueBass','hueMid','hueTre','life','lifePct','lifeThr','size','sizei','sizeSlope','jitter','jitPct','jitThr','motion','thr','speed','swirl','bpmRot','bpmThr','flipBeats','flipBlend','springK','damp','eqBlend','trail','smokeOpacity','zoom'];
+    const ids = ['useMic','showPoints','gain','spawn','maxPoints','centerBias','centerPin','bandRadius','band','cutLowMid','cutMidHigh','isolation','sensBass','sensMid','sensTre','hueBass','hueMid','hueTre','life','lifePct','lifeThr','size','sizei','sizeSlope','jitter','jitPct','jitThr','motion','thr','speed','swirl','bpmRot','bpmThr','flipBeats','flipBlend','springK','damp','eqBlend','trail','smokeOpacity','zoom'];
     const out = {};
     for (const id of ids) {
       const el = document.getElementById(id);
@@ -122,6 +124,24 @@
     }
   }
 
+  function enforceCrossoverOrder(){
+    if (!ui.cutLowMid || !ui.cutMidHigh) return { lowMid: 180, midHigh: 2400 };
+    let lowMid = +ui.cutLowMid.value || 180;
+    let midHigh = +ui.cutMidHigh.value || 2400;
+    const gap = 250;
+    lowMid = Math.max(80, Math.min(400, lowMid));
+    midHigh = Math.max(1200, Math.min(6000, midHigh));
+    if (lowMid > midHigh - gap) {
+      const center = (lowMid + midHigh) * 0.5;
+      lowMid = Math.max(80, Math.min(400, center - gap * 0.5));
+      midHigh = Math.max(1200, Math.min(6000, center + gap * 0.5));
+      if (lowMid > midHigh - gap) lowMid = Math.max(80, Math.min(400, midHigh - gap));
+    }
+    ui.cutLowMid.value = String(Math.round(lowMid));
+    ui.cutMidHigh.value = String(Math.round(midHigh));
+    return { lowMid, midHigh };
+  }
+
   function syncUI(){
     vals.gain.textContent = (+ui.gain.value).toFixed(2);
     vals.spawn.textContent = (+ui.spawn.value).toFixed(0);
@@ -130,6 +150,10 @@
     vals.centerPin.textContent = (+ui.centerPin.value).toFixed(0) + '%';
     vals.bandRadius.textContent = (+ui.bandRadius.value).toFixed(2);
     vals.band.textContent = ['bass','mid','aigu'][+ui.band.value] ?? ui.band.value;
+    const xo = enforceCrossoverOrder();
+    vals.cutLowMid.textContent = Math.round(xo.lowMid) + ' Hz';
+    vals.cutMidHigh.textContent = Math.round(xo.midHigh) + ' Hz';
+    vals.isolation.textContent = (+ui.isolation.value).toFixed(2);
     vals.sensBass.textContent = (+ui.sensBass.value).toFixed(2);
     vals.sensMid.textContent  = (+ui.sensMid.value).toFixed(2);
     vals.sensTre.textContent  = (+ui.sensTre.value).toFixed(2);
@@ -163,8 +187,13 @@
   }
   Object.values(ui).forEach(el => {
     if (!el) return;
-    el.addEventListener('input', () => { syncUI(); saveSettings(); });
-    el.addEventListener('change', () => { syncUI(); saveSettings(); });
+    const handle = () => {
+      syncUI();
+      saveSettings();
+      if (el.id === 'cutLowMid' || el.id === 'cutMidHigh') rebuildDspGraph();
+    };
+    el.addEventListener('input', handle);
+    el.addEventListener('change', handle);
   });
   useMicEl.addEventListener('change', saveSettings);
   bgFile?.addEventListener('change', () => {
@@ -194,46 +223,214 @@
   pointsCanvas.style.position = 'fixed';
 
   // Audio
-  let audioCtx = null, analyser = null, freqData = null, fileNode = null, micNode = null, micStream = null, objectUrl = null, bpm = 0;
+  const BAND_CENTERS = [0.14, 0.50, 0.86];
+  let audioCtx = null, fileNode = null, micNode = null, micStream = null, objectUrl = null, bpm = 0;
+  let outputGain = null, dspInput = null, dspNodes = null;
+  const bandState = {
+    bass: { env: 0, floor: 0, peak: 0.08, norm: 0, lastAt: 0 },
+    mid:  { env: 0, floor: 0, peak: 0.08, norm: 0, lastAt: 0 },
+    tre:  { env: 0, floor: 0, peak: 0.08, norm: 0, lastAt: 0 },
+  };
 
+  function safeDisconnect(node){ if (!node) return; try { node.disconnect(); } catch {} }
+  function resetBandState(){
+    const now = performance.now();
+    for (const state of Object.values(bandState)) {
+      state.env = 0;
+      state.floor = 0;
+      state.peak = 0.08;
+      state.norm = 0;
+      state.lastAt = now;
+    }
+  }
+  function currentCrossovers(){
+    const xo = enforceCrossoverOrder();
+    return { lowMid: xo.lowMid, midHigh: xo.midHigh };
+  }
+  function buildLR4Filter(type, frequency){
+    const a = audioCtx.createBiquadFilter();
+    const b = audioCtx.createBiquadFilter();
+    a.type = type;
+    b.type = type;
+    a.frequency.value = frequency;
+    b.frequency.value = frequency;
+    a.Q.value = Math.SQRT1_2;
+    b.Q.value = Math.SQRT1_2;
+    a.connect(b);
+    return { input: a, output: b, filters: [a, b] };
+  }
+  function makeBandTap(label, sourceNode){
+    const processor = audioCtx.createScriptProcessor(1024, 2, 1);
+    const mute = audioCtx.createGain();
+    mute.gain.value = 0;
+    sourceNode.connect(processor);
+    processor.connect(mute);
+    mute.connect(audioCtx.destination);
+
+    processor.onaudioprocess = (event) => {
+      const input = event.inputBuffer;
+      const output = event.outputBuffer;
+      const channels = Math.max(1, input.numberOfChannels);
+      const len = input.length || 0;
+      const state = bandState[label];
+      const sr = Math.max(1, audioCtx.sampleRate || 48000);
+      const attackCoeff = Math.exp(-1 / (sr * 0.008));
+      const releaseCoeff = Math.exp(-1 / (sr * 0.140));
+      let env = state.env;
+      let sumSq = 0;
+      let peakAbs = 0;
+
+      for (let i = 0; i < len; i++) {
+        let mono = 0;
+        for (let ch = 0; ch < channels; ch++) mono += input.getChannelData(ch)[i] || 0;
+        mono /= channels;
+        const abs = Math.abs(mono);
+        const coeff = abs > env ? attackCoeff : releaseCoeff;
+        env = (coeff * env) + ((1 - coeff) * abs);
+        sumSq += mono * mono;
+        if (abs > peakAbs) peakAbs = abs;
+      }
+
+      const rms = len > 0 ? Math.sqrt(sumSq / len) : 0;
+      const measured = Math.max(env, rms * 1.45, peakAbs * 0.70);
+      state.env = measured;
+      if (state.floor <= 1e-6) state.floor = measured;
+      const floorRise = measured < state.floor ? 0.08 : 0.004;
+      state.floor += (measured - state.floor) * floorRise;
+      state.peak = Math.max(measured, state.peak * 0.9955);
+      const usable = Math.max(0, measured - state.floor * 0.92);
+      const dyn = Math.max(0.03, state.peak - state.floor * 0.55);
+      state.norm = Math.max(0, Math.min(1, usable / dyn));
+      state.lastAt = performance.now();
+
+      for (let ch = 0; ch < output.numberOfChannels; ch++) output.getChannelData(ch).fill(0);
+    };
+
+    return { processor, mute };
+  }
+  function destroyDspGraph(){
+    if (!dspNodes) return;
+    for (const tap of dspNodes.taps) {
+      if (tap?.processor) tap.processor.onaudioprocess = null;
+    }
+    for (const node of dspNodes.allNodes) safeDisconnect(node);
+    safeDisconnect(dspInput);
+    dspNodes = null;
+  }
+  function rebuildDspGraph(){
+    if (!audioCtx || !dspInput) return;
+    destroyDspGraph();
+    const xo = currentCrossovers();
+
+    const bassLP = buildLR4Filter('lowpass', xo.lowMid);
+    const midHP = buildLR4Filter('highpass', xo.lowMid);
+    const midLP = buildLR4Filter('lowpass', xo.midHigh);
+    const treHP = buildLR4Filter('highpass', xo.midHigh);
+
+    dspInput.connect(bassLP.input);
+    dspInput.connect(midHP.input);
+    dspInput.connect(treHP.input);
+    midHP.output.connect(midLP.input);
+
+    const bassTap = makeBandTap('bass', bassLP.output);
+    const midTap = makeBandTap('mid', midLP.output);
+    const treTap = makeBandTap('tre', treHP.output);
+
+    dspNodes = {
+      crossovers: xo,
+      taps: [bassTap, midTap, treTap],
+      allNodes: [
+        bassLP.input, bassLP.output, midHP.input, midHP.output, midLP.input, midLP.output, treHP.input, treHP.output,
+        bassTap.processor, bassTap.mute, midTap.processor, midTap.mute, treTap.processor, treTap.mute
+      ]
+    };
+    resetBandState();
+  }
   function ensureAudio(){
     if (audioCtx) return;
     audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-    analyser = audioCtx.createAnalyser();
-    analyser.fftSize = 2048;
-    analyser.smoothingTimeConstant = 0.78;
-    freqData = new Uint8Array(analyser.frequencyBinCount);
     fileNode = audioCtx.createMediaElementSource(audio);
+    outputGain = audioCtx.createGain();
+    outputGain.gain.value = 1;
+    outputGain.connect(audioCtx.destination);
+    dspInput = audioCtx.createGain();
+    dspInput.gain.value = 1;
+    rebuildDspGraph();
   }
-  function safeDisconnect(node){ if (!node) return; try { node.disconnect(); } catch {} }
+  function stopMic(){
+    if (micNode) { safeDisconnect(micNode); micNode = null; }
+    if (micStream) {
+      try { micStream.getTracks().forEach(t => t.stop()); } catch {}
+      micStream = null;
+    }
+  }
   async function useFileMode(){
     ensureAudio();
     if (audioCtx.state === 'suspended') await audioCtx.resume();
-    if (micNode){ safeDisconnect(micNode); micNode = null; }
-    if (micStream){ try { micStream.getTracks().forEach(t => t.stop()); } catch {} micStream = null; }
+    stopMic();
     safeDisconnect(fileNode);
-    safeDisconnect(analyser);
-    fileNode.connect(analyser);
-    analyser.connect(audioCtx.destination);
+    fileNode.connect(outputGain);
+    fileNode.connect(dspInput);
+    const xo = currentCrossovers();
+    statusEl.textContent = audio.src ? `DSP fichier actif · ${Math.round(xo.lowMid)} / ${Math.round(xo.midHigh)} Hz` : 'Prêt';
   }
   async function useMicMode(){
     ensureAudio();
     if (audioCtx.state === 'suspended') await audioCtx.resume();
     audio.pause();
     safeDisconnect(fileNode);
-    safeDisconnect(analyser);
+    stopMic();
     try {
       micStream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true } });
       micNode = audioCtx.createMediaStreamSource(micStream);
-      safeDisconnect(micNode);
-      micNode.connect(analyser);
+      micNode.connect(dspInput);
       bpm = 0;
-      statusEl.textContent = 'Micro actif';
+      const xo = currentCrossovers();
+      statusEl.textContent = `Micro DSP actif · ${Math.round(xo.lowMid)} / ${Math.round(xo.midHigh)} Hz`;
     } catch (e) {
       useMicEl.checked = false;
       saveSettings();
       statusEl.textContent = 'Micro refusé / indisponible';
     }
+  }
+  function readBands(){
+    const now = performance.now();
+    const rawBass = Math.max(0, Math.min(1, bandState.bass.norm));
+    const rawMid = Math.max(0, Math.min(1, bandState.mid.norm));
+    const rawTre = Math.max(0, Math.min(1, bandState.tre.norm));
+    const fade = (lastAt) => Math.max(0, Math.min(1, 1 - Math.max(0, now - lastAt - 80) / 700));
+
+    let b = rawBass * fade(bandState.bass.lastAt) * (+ui.sensBass.value);
+    let m = rawMid  * fade(bandState.mid.lastAt)  * (+ui.sensMid.value);
+    let t = rawTre  * fade(bandState.tre.lastAt)  * (+ui.sensTre.value);
+    b = Math.max(0, Math.min(1.5, b));
+    m = Math.max(0, Math.min(1.5, m));
+    t = Math.max(0, Math.min(1.5, t));
+
+    const total = Math.max(0, Math.min(1, Math.max(b, m, t)));
+    if (total <= 1e-4) return { bassRaw: 0, midRaw: 0, treRaw: 0, bassIso: 0, midIso: 0, treIso: 0, total: 0, centroidNorm: 0.5 };
+
+    const isoExp = Math.max(1, +ui.isolation.value || 2.4);
+    const wb = Math.pow(Math.max(0, b), isoExp);
+    const wm = Math.pow(Math.max(0, m), isoExp);
+    const wt = Math.pow(Math.max(0, t), isoExp);
+    const wsum = Math.max(1e-6, wb + wm + wt);
+
+    const bassIso = total * (wb / wsum);
+    const midIso = total * (wm / wsum);
+    const treIso = total * (wt / wsum);
+    const centroidNorm = ((wb * BAND_CENTERS[0]) + (wm * BAND_CENTERS[1]) + (wt * BAND_CENTERS[2])) / wsum;
+
+    return {
+      bassRaw: Math.max(0, Math.min(1, b)),
+      midRaw: Math.max(0, Math.min(1, m)),
+      treRaw: Math.max(0, Math.min(1, t)),
+      bassIso: Math.max(0, Math.min(1, bassIso)),
+      midIso: Math.max(0, Math.min(1, midIso)),
+      treIso: Math.max(0, Math.min(1, treIso)),
+      total,
+      centroidNorm: Math.max(0, Math.min(1, centroidNorm)),
+    };
   }
 
   async function estimateBPMFromFile(file){
@@ -306,43 +503,18 @@
   });
   useMicEl.addEventListener('change', async () => {
     if (useMicEl.checked) await useMicMode();
-    else { if (audio.src) await useFileMode(); else statusEl.textContent = 'Prêt'; }
+    else {
+      stopMic();
+      resetBandState();
+      if (audio.src) await useFileMode();
+      else statusEl.textContent = 'Prêt';
+    }
   });
 
-  function bandEnergy(a, b){
-    const n = freqData.length;
-    const i0 = Math.max(0, Math.floor(a * n));
-    const i1 = Math.min(n, Math.floor(b * n));
-    if (i1 <= i0) return 0;
-    let s = 0;
-    for (let i = i0; i < i1; i++) s += freqData[i];
-    return s / (i1 - i0);
-  }
-  function bandPeakish(a, b, p = 3.0){
-    const n = freqData.length;
-    const i0 = Math.max(0, Math.floor(a * n));
-    const i1 = Math.min(n, Math.floor(b * n));
-    if (i1 <= i0) return 0;
-    let s = 0;
-    for (let i = i0; i < i1; i++) s += Math.pow(freqData[i], p);
-    return Math.pow(s / (i1 - i0), 1 / p);
-  }
-  function spectralCentroidNorm(){
-    let num = 0, den = 0;
-    const n = freqData.length;
-    const step = 4;
-    for (let i = 0; i < n; i += step) {
-      const v = freqData[i] / 255;
-      den += v;
-      num += v * i;
-    }
-    if (den <= 1e-6) return 0.5;
-    return (num / den) / Math.max(1, n - 1);
-  }
   function pickBand(b, m, t){
-    const wb = Math.pow(Math.max(0, (b / 255) * (+ui.sensBass.value)), 3.2);
-    const wm = Math.pow(Math.max(0, (m / 255) * (+ui.sensMid.value)), 3.2);
-    const wt = Math.pow(Math.max(0, (t / 255) * (+ui.sensTre.value)), 3.2);
+    const wb = Math.pow(Math.max(0, b), 3.2);
+    const wm = Math.pow(Math.max(0, m), 3.2);
+    const wt = Math.pow(Math.max(0, t), 3.2);
     const sum = wb + wm + wt;
     if (sum <= 1e-9) return 1;
     const maxW = Math.max(wb, wm, wt);
@@ -426,23 +598,6 @@
     return { x: cx + Math.cos(theta) * rPx, y: cy + Math.sin(theta) * rPx };
   }
   function effectiveEmitterSize(baseSize){ return Math.max(1.5, baseSize); }
-  function pickBinIndexWeighted(data, aFrac, bFrac){
-    const n = data.length;
-    const ia = Math.max(0, Math.floor(aFrac * n));
-    const ib = Math.min(n, Math.floor(bFrac * n));
-    const span = Math.max(1, ib - ia);
-    for (let k = 0; k < 12; k++) {
-      const idx = ia + (Math.random() * span) | 0;
-      const w = data[idx] / 255;
-      if (Math.random() < w) return idx;
-    }
-    return ia + (Math.random() * span) | 0;
-  }
-  function focusRange(focus){
-    if (focus === 0) return [0.00, 0.10];
-    if (focus === 1) return [0.10, 0.40];
-    return [0.40, 1.00];
-  }
 
   const emitters = [];
   let spawnAcc = 0;
@@ -478,7 +633,7 @@
     return true;
   }
 
-  function addEmitter(intensity, colorBand, geomBand, bassNorm, globalMeanR, nowSec){
+  function addEmitter(intensity, colorBand, geomBand, bassNorm, globalMeanR, nowSec, bandSnapshot){
     const w = window.innerWidth;
     const h = window.innerHeight;
     const cx = w * 0.5;
@@ -493,10 +648,9 @@
     const rNorm = (Math.random() < (+ui.centerPin.value) / 100) ? 0 : lerp(rCenter, rBand, +ui.bandRadius.value);
     const theta = Math.random() * Math.PI * 2;
 
-    const [aFrac, bFrac] = focusRange(colorBand);
-    const idx = pickBinIndexWeighted(freqData, aFrac, bFrac);
-    const normF = idx / Math.max(1, freqData.length - 1);
-    const bassness = 1 - normF;
+    const bandBassness = colorBand === 0 ? 1.0 : (colorBand === 1 ? 0.52 : 0.08);
+    const centroidBassness = 1 - (bandSnapshot?.centroidNorm ?? 0.5);
+    const bassness = clamp01(0.68 * bandBassness + 0.32 * centroidBassness);
 
     const baseSize = +ui.size.value;
     const sizeI = +ui.sizei.value;
@@ -531,7 +685,7 @@
     const dr = speed * modeScale * (0.35 + Math.random() * 0.65) * staticFactor;
     const dtheta = (manualSwirl + bpmSwirl) * modeScale * (0.6 + Math.random() * 0.8) * (0.35 + intensity) * staticFactor;
 
-    const freqEq = 0.10 + 0.90 * normF;
+    const freqEq = BAND_CENTERS[colorBand] ?? 0.5;
     const rEq = lerp(freqEq, globalMeanR, +ui.eqBlend.value);
 
     const pos0 = scenePosFromPolar(cx, cy, theta, rNorm, minDim);
@@ -549,7 +703,6 @@
     };
     emitters.push(emitter);
 
-    // démarrage immédiat: 2 splats pour lancer la fumée au top musique
     const eSize = effectiveEmitterSize(emitter.sizeBase);
     injectSmoke(emitter.x, emitter.y, emitter.x - Math.cos(theta) * eSize * 0.7, emitter.y - Math.sin(theta) * eSize * 0.7, emitter.rgb, eSize * 1.25, intensity);
     injectSmoke(emitter.x, emitter.y, emitter.x, emitter.y, emitter.rgb, eSize, intensity * 0.85);
@@ -573,8 +726,8 @@
     ctx.clearRect(0, 0, w, h);
 
     const activeMic = !!micStream && useMicEl.checked;
-    const activeFile = !activeMic && analyser && !audio.paused && !audio.ended;
-    const canAnalyse = analyser && (activeMic || activeFile);
+    const activeFile = !activeMic && !!audioCtx && !!audio.src && !audio.paused && !audio.ended;
+    const canAnalyse = !!audioCtx && !!dspNodes && (activeMic || activeFile);
     const nowSec = activeMic ? performance.now() / 1000 : (audio.currentTime || 0);
 
     let bass = 0, mid = 0, tre = 0;
@@ -582,20 +735,16 @@
     let globalMeanR = 0.55;
 
     if (canAnalyse) {
-      analyser.getByteFrequencyData(freqData);
-      bass = bandEnergy(0.00, 0.10);
-      mid  = bandEnergy(0.10, 0.40);
-      tre  = bandPeakish(0.40, 1.00, 3.2);
+      const bands = readBands();
+      bass = bands.bassIso;
+      mid = bands.midIso;
+      tre = bands.treIso;
 
-      const bN = (bass / 255) * (+ui.sensBass.value);
-      const mN = (mid  / 255) * (+ui.sensMid.value);
-      const tN = (tre  / 255) * (+ui.sensTre.value);
-      const peak = Math.max(bN, mN, tN);
+      const peak = Math.max(bass, mid, tre);
       const intensity = clamp01(Math.pow(clamp01(peak), 1.05) * (+ui.gain.value));
 
-      bassNorm = clamp01(bass / 255);
-      const c = spectralCentroidNorm();
-      centroidSm += (c - centroidSm) * (1 - Math.exp(-dt / 0.35));
+      bassNorm = bands.bassRaw;
+      centroidSm += (bands.centroidNorm - centroidSm) * (1 - Math.exp(-dt / 0.35));
       globalMeanR = 0.12 + 0.88 * centroidSm;
 
       spawnAcc += intensity * (+ui.spawn.value) * dt;
@@ -605,7 +754,7 @@
 
       for (let i = 0; i < n; i++) {
         const colorBand = pickBand(bass, mid, tre);
-        addEmitter(intensity, colorBand, geomBand, bassNorm, globalMeanR, nowSec);
+        addEmitter(intensity, colorBand, geomBand, bassNorm, globalMeanR, nowSec, bands);
       }
     }
 
