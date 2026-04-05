@@ -1,6 +1,7 @@
 
 (() => {
   const LS_KEY = 'restart_step2_smoke_v1';
+  const UI_VERSION = 2;
 
   const fluidCanvas = document.getElementById('fluidCanvas');
   const pointsCanvas = document.getElementById('pointsCanvas');
@@ -80,21 +81,29 @@
   };
 
   function safeParseJSON(s){ try { return JSON.parse(s); } catch { return null; } }
+  function legacyZoomRawToPercent(raw){
+    const v = Number(raw);
+    if (!Number.isFinite(v)) return 100;
+    return String(Math.round(Math.max(45, Math.min(220, Math.exp(v / 120) * 100))));
+  }
   function loadSettings(){
     const raw = localStorage.getItem(LS_KEY);
     if (!raw) return;
     const obj = safeParseJSON(raw);
     if (!obj || typeof obj !== 'object') return;
+    const savedVersion = Number(obj.__uiVersion) || 0;
     for (const [id, val] of Object.entries(obj)) {
+      if (id === '__uiVersion') continue;
       const el = document.getElementById(id);
       if (!el) continue;
       if (el.type === 'checkbox') el.checked = !!val;
+      else if (id === 'zoom' && savedVersion < 2) el.value = legacyZoomRawToPercent(val);
       else el.value = String(val);
     }
   }
   function saveSettings(){
     const ids = ['useMic','showPoints','gain','spawn','maxPoints','centerBias','centerPin','bandRadius','band','cutLowMid','cutMidHigh','isolation','sensBass','sensMid','sensTre','hueBass','hueMid','hueTre','life','lifePct','lifeThr','size','sizei','sizeSlope','jitter','jitPct','jitThr','motion','thr','speed','swirl','bpmRot','bpmThr','flipBeats','flipBlend','springK','damp','eqBlend','trail','smokeOpacity','zoom'];
-    const out = {};
+    const out = { __uiVersion: UI_VERSION };
     for (const id of ids) {
       const el = document.getElementById(id);
       if (!el) continue;
@@ -182,7 +191,7 @@
     vals.eqBlend.textContent = (+ui.eqBlend.value).toFixed(2);
     vals.trail.textContent = (+ui.trail.value).toFixed(2);
     vals.smokeOpacity.textContent = (+ui.smokeOpacity.value).toFixed(0) + '%';
-    vals.zoom.textContent = (+ui.zoom.value).toFixed(0) + '%';
+    vals.zoom.textContent = Math.round(sceneZoomFromRaw(ui.zoom.value) * 100) + '%';
     applySmokeOpacity();
   }
   Object.values(ui).forEach(el => {
@@ -592,7 +601,16 @@
   }
   function clamp01(x){ return Math.max(0, Math.min(1, x)); }
   function lerp(a,b,t){ return a + (b - a) * t; }
-  function sceneZoom(){ return Math.max(0.45, Math.min(2.2, Math.exp((+ui.zoom.value || 0) / 120))); }
+  function clamp(x, a, b){ return Math.max(a, Math.min(b, x)); }
+  function sceneZoomFromRaw(raw){
+    const v = Number(raw);
+    if (!Number.isFinite(v)) return 1;
+    // Compatibilité avec l'ancien slider stocké en localStorage (-30..400, 0 = neutre)
+    if (v < 25 || v > 300) return clamp(Math.exp(v / 120), 0.45, 2.2);
+    // Nouveau slider : pourcentage direct, 100 = neutre
+    return clamp(v / 100, 0.25, 3.0);
+  }
+  function sceneZoom(){ return sceneZoomFromRaw(ui.zoom?.value); }
   function scenePosFromPolar(cx, cy, theta, rNorm, minDim){
     const rPx = rNorm * minDim * 0.42 * sceneZoom();
     return { x: cx + Math.cos(theta) * rPx, y: cy + Math.sin(theta) * rPx };
