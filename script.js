@@ -1536,9 +1536,18 @@ window.addEventListener('touchend', e => {
 });
 
 window.addEventListener('keydown', e => {
-    if (e.code === 'KeyP')
+    if (e.defaultPrevented)
+        return;
+
+    const target = e.target;
+    const typing = target instanceof Element && !!target.closest('input, textarea, select, button, [contenteditable="true"], .dg');
+
+    if (e.code === 'KeyP' && !typing)
         config.PAUSED = !config.PAUSED;
-    if (e.key === ' ')
+
+    // La barre espace est maintenant réservée au play/pause MP3/YouTube dans points-overlay.js.
+    // On garde l'ancien splat uniquement si l'évènement n'a pas été capturé.
+    if (e.code === 'Space' && !typing)
         splatStack.push(parseInt(Math.random() * 20) + 5);
 });
 

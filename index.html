@@ -3,6 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <meta name="referrer" content="strict-origin-when-cross-origin" />
   <title>Étape 2 — Fluide + fumée audio</title>
   <style>
     :root {
@@ -21,12 +22,49 @@
       color: var(--text);
       font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
     }
+    #imageBgLayer,
+    #youtubeBgLayer {
+      position: fixed;
+      inset: -4vmax;
+      z-index: 0;
+      overflow: hidden;
+      pointer-events: none;
+      background: #000 center / cover no-repeat;
+      opacity: 0;
+      transform-origin: 50% 50%;
+      will-change: transform, filter, opacity;
+      transition: opacity .22s ease, filter .08s linear, transform .08s linear;
+    }
+    #imageBgLayer {
+      background-color: transparent;
+    }
+    #imageBgLayer.is-active { opacity: 1; }
+    #youtubeBgLayer.is-active { opacity: .88; }
+    #youtubeBgFrame {
+      position: absolute;
+      left: 50%;
+      top: 50%;
+      width: max(100vw, 177.7778vh);
+      height: max(56.25vw, 100vh);
+      transform: translate(-50%, -50%);
+      border: 0;
+    }
+    #youtubeBgFrame iframe {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      border: 0;
+    }
     #fluidCanvas, #pointsCanvas {
       position: fixed;
       inset: 0;
       width: 100vw;
       height: 100vh;
       display: block;
+      transform-origin: 50% 50%;
+      will-change: transform;
+      transition: transform .08s linear;
     }
     #fluidCanvas { z-index: 1; pointer-events: none; opacity: .72; }
     #pointsCanvas {
@@ -90,6 +128,24 @@
       color: var(--text);
       font-size: 13px;
     }
+    .textInput {
+      width: min(320px, 42vw);
+      min-width: 180px;
+      border: 1px solid rgba(255,255,255,.16);
+      border-radius: 999px;
+      background: rgba(0,0,0,.28);
+      color: var(--text);
+      outline: none;
+      padding: 8px 11px;
+      font-size: 13px;
+    }
+    .textInput::placeholder { color: rgba(255,255,255,.48); }
+    .btn {
+      border: 1px solid rgba(255,255,255,.16);
+      border-radius: 999px;
+      background: rgba(255,255,255,.08);
+      padding: 8px 11px;
+    }
     input[type="file"] { display: none; }
     input[type="range"] { accent-color: white; }
     .toggle { display: inline-flex; align-items: center; gap: 8px; }
@@ -113,6 +169,51 @@
     .promo { display: none !important; }
     .dg { z-index: 20 !important; transition: opacity .18s ease; }
     #audio { transition: opacity .18s ease; }
+
+    .media-transport {
+      position: fixed;
+      left: 12px;
+      right: 12px;
+      bottom: 12px;
+      z-index: 10;
+      min-height: 38px;
+      display: grid;
+      grid-template-columns: 42px 92px 1fr 90px;
+      gap: 10px;
+      align-items: center;
+      padding: 8px 12px;
+      border-radius: 999px;
+      background: rgba(244,244,244,.93);
+      border: 1px solid rgba(0,0,0,.12);
+      box-shadow: 0 10px 36px rgba(0,0,0,.25);
+      color: rgba(0,0,0,.76);
+      backdrop-filter: blur(10px);
+      transition: opacity .18s ease, transform .18s ease;
+    }
+    .media-transport button {
+      width: 32px;
+      height: 32px;
+      border: 0;
+      border-radius: 999px;
+      background: transparent;
+      color: rgba(0,0,0,.65);
+      cursor: pointer;
+      font-size: 16px;
+      line-height: 32px;
+      padding: 0;
+    }
+    .media-transport button:hover { background: rgba(0,0,0,.08); }
+    .media-transport .media-time {
+      font-size: 13px;
+      white-space: nowrap;
+      color: rgba(0,0,0,.72);
+      font-variant-numeric: tabular-nums;
+    }
+    .media-transport input[type="range"] {
+      width: 100%;
+      accent-color: rgba(0,0,0,.55);
+    }
+    #audio { display: none; }
     .ui-layer {
       transition: opacity .18s ease, transform .18s ease;
     }
@@ -130,6 +231,10 @@
   </style>
 </head>
 <body>
+  <div id="imageBgLayer" aria-hidden="true"></div>
+  <div id="youtubeBgLayer" aria-hidden="true">
+    <div id="youtubeBgFrame"></div>
+  </div>
   <canvas id="fluidCanvas"></canvas>
   <canvas id="pointsCanvas"></canvas>
 
@@ -140,6 +245,9 @@
 
       <label class="fileLabel" for="bgFile">Image de fond</label>
       <input id="bgFile" type="file" accept="image/*">
+
+      <input id="youtubeUrl" class="textInput" type="url" placeholder="Lien YouTube fond" autocomplete="off">
+      <button id="loadYoutubeBg" class="btn" type="button">Fond YouTube</button>
       <button id="clearBg" class="btn" type="button">Retirer fond</button>
 
       <label class="toggle"><input id="useMic" type="checkbox"> Micro</label>
@@ -396,7 +504,40 @@
         <div class="value" id="v_zoom"></div>
         <input id="zoom" type="range" min="25" max="300" step="1" value="250">
       </div>
-      <div class="small">L’image de fond se place sous la fumée. L’opacité règle uniquement la couche de fumée.</div>
+
+      <div class="divider"></div>
+      <div style="font-weight:600; font-size:13px;">Scène ↔ basses</div>
+
+      <div class="row">
+        <label class="small">Secousse basses scène</label>
+        <div class="value" id="v_sceneShake"></div>
+        <input id="sceneShake" type="range" min="0" max="90" step="1" value="28">
+      </div>
+
+      <div class="row">
+        <label class="small">Zoom basses scène</label>
+        <div class="value" id="v_sceneScale"></div>
+        <input id="sceneScale" type="range" min="0" max="0.22" step="0.001" value="0.075">
+      </div>
+
+      <div class="row">
+        <label class="small">Rotation basses scène</label>
+        <div class="value" id="v_sceneRotate"></div>
+        <input id="sceneRotate" type="range" min="0" max="7" step="0.01" value="2.2">
+      </div>
+
+      <div class="row">
+        <label class="small">Blur fond ↔ basses</label>
+        <div class="value" id="v_bgBlur"></div>
+        <input id="bgBlur" type="range" min="0" max="32" step="0.1" value="10">
+      </div>
+
+      <div class="row">
+        <label class="small">Parallaxe fond basses</label>
+        <div class="value" id="v_bgParallax"></div>
+        <input id="bgParallax" type="range" min="0" max="2.5" step="0.01" value="0.7">
+      </div>
+      <div class="small">L’image ou la vidéo YouTube se place sous la fumée. La barre du bas pilote le MP3 ou YouTube; Espace = pause / lecture synchronisée.</div>
     </div>
   </div>
 
@@ -406,7 +547,13 @@
   <a id="apple_link" href="#"></a>
   <a id="google_link" href="#"></a>
 
-  <audio id="audio" controls style="position:fixed; left:12px; right:12px; bottom:56px; width:calc(100% - 24px); z-index:10; opacity:.92"></audio>
+  <div id="mediaTransport" class="media-transport ui-layer" aria-label="Barre de lecture synchronisée">
+    <button id="mediaPlay" type="button" aria-label="Lecture / pause">▶</button>
+    <div id="mediaTime" class="media-time">0:00 / 0:00</div>
+    <input id="mediaSeek" type="range" min="0" max="1000" step="1" value="0" aria-label="Position de lecture">
+    <input id="mediaVolume" type="range" min="0" max="1" step="0.01" value="1" aria-label="Volume">
+  </div>
+  <audio id="audio" preload="metadata"></audio>
 
   <script>
     window.ga = window.ga || function(){};
